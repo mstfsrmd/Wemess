@@ -24,13 +24,24 @@ var con = mysql.createConnection({
   password: "Mo137777",
   database : "message"
 });
+var con2 = mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "Mo137777",
+  database : "msg"
+});
 
 
-// connecting to database
+// connecting to databases
 con.connect(function(err) {
   if (err) throw err;
-  console.log("Connected to Database!");
+  console.log("Connected to Database1.");
 });
+con2.connect(function(err) {
+  if (err) throw err;
+  console.log("Connected to Database2.");
+});
+
 
 //getting route
 app.use(express.static('public'));
@@ -40,11 +51,29 @@ app.use(express.static('src'));
 var usercounter = 0;
 var count = 0;
 var people = [];
+var roomArray = [];
+var roomId = [];
 //Socket connecting
 io.on('connection',function (socket) {
   //user connection
-  console.log("user "+sid+" connected.");
   var sid = socket.id;
+  console.log("user "+sid+" connected.");
+
+  //check if usrname exists
+  socket.on('usrcheck', function (usrcheck) {
+    var usrcheck1 = 'select table_name from information_schema.tables where table_type = "BASE TABLE" and TABLE_SCHEMA = "message" and table_name LIKE "'+usrcheck+'%"  order by table_schema, table_name';
+    con.query(usrcheck1, function (err, res) {
+      if (err) {
+        throw err;
+      }
+      if (res == usrcheck) {
+        console.log('exists: '+res);
+      }
+      else {
+        console.log('allowed '+res);
+      }
+    });
+  });
 
   usercounter++ ;
   console.log(usercounter+ ' user(s) are online.');
@@ -60,7 +89,6 @@ io.on('connection',function (socket) {
   });
     //getting exiting username
   socket.on('logusr', function (logusr) {
-    global.logusr = logusr;
     console.log(logusr+ ' loged in.');
     //sending username to client
     socket.broadcast.emit('logusr', logusr);
@@ -69,7 +97,6 @@ io.on('connection',function (socket) {
     var u = logusr;
     var count = 0;
     people[u] = sid;
-
     //Showing previuse messages from database
     var sql1 = "SELECT * FROM "+logusr+"";
     con.query(sql1, function (err, res) {
@@ -190,21 +217,66 @@ io.on('connection',function (socket) {
 
 
 
-
+    var num = 0;
     //recieve private msg
     socket.on('pvmsg',function (pvmsg) {
-      console.log(id);
       var pv = pvmsg.pvmsg;
       var usrnm = pvmsg.unm1;
-      console.log(usrnm+":"+pv);
-      var pvinsert = "INSERT INTO "+pvname+usrnm+" (name, msg) VALUES ('"+usrnm+"', '"+pv+"')";
+      /*var pvinsert = "INSERT INTO "+pvname+usrnm+" (name, msg) VALUES ('"+usrnm+"', '"+pv+"')";
       con.query(pvinsert, function (err, res) {
         if (err) {
           throw err;
         }
         console.log('inserted!');
+      });*/
+      var roomname = roomArray[usrnm];
+      io.to(roomname).emit('pvmsg', {pv, usrnm, roomname});
+      console.log('sending msg to '+roomArray[usrnm]+' room');
+      // emit notification
+      if (num == 0) {
+        socket.to(roomId[usrnm]).emit('pvnotif', {usrnm, roomname});
+        console.log('sending notif to '+roomId[usrnm]+' room');
+        num++;
+        console.log(num);
+      }
+      else {
+        num++;
+        socket.to(roomId[usrnm]).emit('num', num);
+        console.log(num);
+      }
+    });
+
+    socket.on('reqpv', function (reqpv) {
+      num = 0;
+      var pvname = reqpv.reqpv;
+      var self = reqpv.selfname;
+      var id = people[pvname];
+      var room = pvname+self;
+      roomArray[self] = room;
+      roomId[self] = id;
+      console.log(roomArray);
+      console.log(roomId);
+      if (id) {
+        console.log('sending request for pv chat to '+id+'...');
+        socket.join(room);
+        io.to(id).emit('room', room);
+        console.log('joinied to '+room);
+      }
+      else {
+        console.log('Target user is offline.');
+      }
+      /*var pvchattable = 'CREATE TABLE IF NOT EXISTS '+pvname+logusr+' (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), msg VARCHAR(2555));'
+      con.query(pvchattable, function (err, res) {
+        if (err) {
+          throw err;
+        }
       });
-      io.to(id).emit('pvmsg', {pv, usrnm});
+      var history = 'SELECT * FROM '+pvname+logusr+'';
+      con.query(history, function (err, res) {
+        if (err) {
+          throw err;
+        }
+      });*/
     });
   });
   //user disconnection
@@ -213,39 +285,54 @@ io.on('connection',function (socket) {
     console.log('user '+socket.id+' disconnected. '+usercounter+' user(s) are online.');
   });
 
-  socket.on('reqpv', function (reqpv) {
-    global.pvname = reqpv;
-    global.id = people[reqpv];
-    var pvchattable = 'CREATE TABLE IF NOT EXISTS '+pvname+logusr+' (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), msg VARCHAR(2555));'
-    con.query(pvchattable, function (err, res) {
-      if (err) {
-        throw err;
-      }
-      console.log(res);
-    });
-    var history = 'SELECT * FROM '+pvname+logusr+'';
-    con.query(history, function (err, res) {
-      if (err) {
-        throw err;
-      }
-      console.log(res);
-    });
-    if (id) {
-      console.log('sending request for pv chat to '+id+'...');
-      socket.join(id);
-      //io.to(id).emit('hi', id);
-    }
-    else {
-      console.log('user is offline.');
-    }
 
+  socket.on('joinroom', function (joinroom) {
+    var jr = joinroom.joinroom;
+    var jn = joinroom.self;
+    socket.join(jr);
+    roomArray[jn] = jr;
+    console.log(jn+' joined to '+jr);
+    console.log(roomArray);
+  });
+
+  //deleteing a pvchat
+  socket.on('deletechat', function (deln) {
+    console.log('leaving '+deln+' room');
+    socket.leave(deln);
+  });
+
+
+  //searchin in usernames
+  socket.on('search', function (key) {
+    var search = 'select table_name from information_schema.tables where table_type = "BASE TABLE" and TABLE_SCHEMA = "message" and table_name LIKE "%'+key+'%"  order by table_schema, table_name';
+    con.query(search, function (err, res) {
+      if (err) {
+        console.log('erroe accured!');
+      }
+      if (res == '') {
+        var no = 'no result found';
+        socket.emit('no', no);
+      }
+      else {
+        var name = 'INFORMATION_SCHEMA.TABLES';
+        var tab1le = 'TABLE_NAME';
+        var f = res.map(name=>name.TABLE_NAME);
+        socket.emit('res', f);
+      }
+    });
   });
 
 });
 
 
 
-
+/*var d = 'DROP TABLE salam_mahdi,salam_salam, salamadel,salammahdi, salamsalam, uId, user';
+con.query(d, function (err, res) {
+  if (err) {
+    throw err;
+  }
+  console.log(res);
+});*/
 
 
 
